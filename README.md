@@ -67,6 +67,7 @@ git push
 | --- | --- |
 | **Framework** | [Next.js](https://nextjs.org) (App Router) + React |
 | **The app** | `app/page.js` — the whole SplitSmart UI (one file to start) |
+| **Expense API** | `POST /api/split` — parses expense text with Gemini; accepts `{ "text": "..." }` and returns `name`, `amount`, `paidBy`, and `emoji` |
 | **Styles** | `app/globals.css` + inline styles (deepEntra blue) |
 | **Data** | Saved in your browser (`localStorage`) for now — you'll move it to a real database in Hour 5 |
 

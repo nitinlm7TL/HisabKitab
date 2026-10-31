@@ -11,19 +11,13 @@ const SEED = [
 
 const inr = (n) => '₹' + Number(n || 0).toLocaleString('en-IN');
 
-// Basic "parse an expense from text" — just enough to work. In Hour 3 you'll replace
-// this naive version with a real AI call (Gemini) that understands messy human sentences.
-function parseExpense(text) {
-  const amountMatch = text.match(/\d[\d,]*(\.\d+)?/);
-  const amount = amountMatch ? Number(amountMatch[0].replace(/,/g, '')) : 0;
-  const name = text.replace(/\d[\d,]*(\.\d+)?/, '').replace(/\s+/g, ' ').trim() || 'Expense';
-  return { id: 'e-' + Date.now(), emoji: '🧾', name: name.charAt(0).toUpperCase() + name.slice(1), paidBy: 'You', amount };
-}
-
 export default function Home() {
   const [expenses, setExpenses] = useState(SEED);
   const [text, setText] = useState('');
   const [ready, setReady] = useState(false);
+  const [parsing, setParsing] = useState(false);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
 
   // Load any saved expenses from the browser on first render.
   useEffect(() => {
@@ -43,11 +37,44 @@ export default function Home() {
 
   const total = expenses.reduce((sum, e) => sum + Number(e.amount || 0), 0);
 
-  const addExpense = () => {
+  const addExpense = async () => {
     const t = text.trim();
-    if (!t) return;
-    setExpenses((list) => [...list, parseExpense(t)]);
-    setText('');
+    if (!t || parsing) return;
+
+    setParsing(true);
+    setError('');
+    setNotice('');
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 25_000);
+
+    try {
+      const response = await fetch('/api/split', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: t }),
+        signal: controller.signal,
+      });
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Could not parse the expense.');
+      }
+
+      const { warning, ...expense } = result;
+      setExpenses((list) => [...list, { ...expense, id: 'e-' + Date.now() }]);
+      setText('');
+      setNotice(warning || '');
+    } catch (requestError) {
+      setError(
+        requestError.name === 'AbortError'
+          ? 'Expense parsing took too long. Please try again.'
+          : requestError.message || 'Could not parse the expense. Please try again.',
+      );
+    } finally {
+      clearTimeout(timeoutId);
+      setParsing(false);
+    }
   };
 
   const removeExpense = (id) => setExpenses((list) => list.filter((e) => e.id !== id));
@@ -71,11 +98,17 @@ export default function Home() {
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && addExpense()}
-            placeholder="Add an expense…"
+            placeholder="Describe an expense…"
             aria-label="Add an expense"
+            disabled={parsing}
           />
-          <button style={styles.addBtn} onClick={addExpense} aria-label="Add">+</button>
+          <button style={styles.addBtn} onClick={addExpense} aria-label="Add" disabled={parsing || !text.trim()}>
+            {parsing ? '…' : '+'}
+          </button>
         </div>
+        {parsing && <div role="status" style={styles.processing}>Processing expense…</div>}
+        {error && <div role="alert" style={styles.error}>{error}</div>}
+        {notice && <div role="status" style={styles.processing}>{notice}</div>}
 
         {/* Expense list */}
         <div style={styles.list}>
@@ -101,7 +134,7 @@ export default function Home() {
 
       <p style={styles.footnote}>
         SplitSmart starter · deepEntra Academy — Build &amp; Ship It.<br />
-        This is the basic app — you&apos;ll add the AI and a real database next.
+        Gemini helps turn expense descriptions into expense entries.
       </p>
     </main>
   );
@@ -149,6 +182,8 @@ const styles = {
     background: 'linear-gradient(135deg, var(--blue), var(--cyan))',
     boxShadow: '0 10px 22px -8px rgba(28,95,212,.6)',
   },
+  error: { color: '#b42318', fontSize: 13, margin: '-6px 2px 14px' },
+  processing: { color: 'var(--muted)', fontSize: 13, margin: '-6px 2px 14px' },
   list: { display: 'flex', flexDirection: 'column', gap: 10, minHeight: 60 },
   empty: { color: 'var(--muted)', fontSize: 14, textAlign: 'center', padding: '24px 0' },
   item: {
