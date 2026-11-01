@@ -65,7 +65,8 @@ drop policy if exists "see own expenses"      on expenses;
 drop policy if exists "add own expenses"      on expenses;
 drop policy if exists "delete own expenses"   on expenses;
 
-create policy "see my groups"      on groups for select using (is_group_member(id));
+create policy "see my groups"      on groups for select
+  using (auth.uid() = created_by or is_group_member(id));
 create policy "create groups"      on groups for insert with check (auth.uid() = created_by);
 
 create policy "see my memberships" on group_members for select using (user_id = auth.uid());

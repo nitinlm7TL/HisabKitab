@@ -8,6 +8,8 @@ const inr = (n) => '₹' + Number(n || 0).toLocaleString('en-IN');
 export default function Home() {
   const [session, setSession] = useState(null);
   const [checking, setChecking] = useState(true);
+  const [groups, setGroups] = useState([]);
+  const [groupId, setGroupId] = useState('');
   const [expenses, setExpenses] = useState([]);
   const [text, setText] = useState('');
   const [email, setEmail] = useState('');
@@ -20,39 +22,66 @@ export default function Home() {
     return () => sub.subscription.unsubscribe();
   }, []);
 
-  useEffect(() => {
-    if (!session) { setExpenses([]); return; }
-    supabase.from('expenses').select('*').order('created_at', { ascending: true })
-      .then(({ data }) => setExpenses(data || []));
-  }, [session]);
+  const loadGroups = async () => {
+    const { data } = await supabase.from('groups').select('*').order('created_at');
+    setGroups(data || []);
+    if (data && data.length) setGroupId((cur) => (data.find((g) => g.id === cur) ? cur : data[0].id));
+  };
+  useEffect(() => { if (session) loadGroups(); else { setGroups([]); setGroupId(''); } }, [session]);
 
-  const signUp = async () => {
-    setAuthMsg('');
-    const { error } = await supabase.auth.signUp({ email, password });
-    setAuthMsg(error ? error.message : 'Account created — you are signed in!');
-  };
-  const signIn = async () => {
-    setAuthMsg('');
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) setAuthMsg(error.message);
-  };
+  useEffect(() => {
+    if (!session || !groupId) { setExpenses([]); return; }
+    supabase.from('expenses').select('*').eq('group_id', groupId).order('created_at')
+      .then(({ data }) => setExpenses(data || []));
+  }, [session, groupId]);
+
+  const signUp = async () => { setAuthMsg(''); const { error } = await supabase.auth.signUp({ email, password }); setAuthMsg(error ? error.message : 'Account created — you are signed in!'); };
+  const signIn = async () => { setAuthMsg(''); const { error } = await supabase.auth.signInWithPassword({ email, password }); if (error) setAuthMsg(error.message); };
   const signOut = () => supabase.auth.signOut();
 
+  const createGroup = async () => {
+    const name = prompt('Name your group (e.g. Goa Trip):');
+    if (!name) return;
+    const { data: g, error } = await supabase.from('groups').insert({ name, created_by: session.user.id }).select().single();
+    if (error) { alert('Error: ' + error.message); return; }
+    const { error: membershipError } = await supabase.from('group_members')
+      .insert({ group_id: g.id, user_id: session.user.id });
+    if (membershipError) {
+      alert('Group created, but adding you as a member failed: ' + membershipError.message);
+      await loadGroups();
+      return;
+    }
+    await loadGroups();
+    setGroupId(g.id);
+  };
+
+  const joinGroup = async () => {
+    const code = prompt('Enter the group code:');
+    if (!code) return;
+    const { data, error } = await supabase.rpc('join_group', { code });
+    if (error) { alert('Error: ' + error.message); return; }
+    await loadGroups();
+    setGroupId(data);
+  };
+
   const total = expenses.reduce((sum, e) => sum + Number(e.amount || 0), 0);
+  const currentGroup = groups.find((g) => g.id === groupId);
 
   const addExpense = async () => {
     const t = text.trim();
-    if (!t) return;
+    if (!t || !groupId) return;
     try {
       const res = await fetch('/api/split', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: t }),
       });
       const data = await res.json();
-      if (data.error) { alert('AI error: ' + data.error); return; }
+      if (!res.ok || data.error) { alert('AI error: ' + (data.error || 'Could not parse the expense.')); return; }
       const { data: rows, error } = await supabase.from('expenses')
         .insert({
           user_id: session.user.id,
+          group_id: groupId,
           name: data.name,
           emoji: data.emoji,
           paid_by: data.paidBy,
@@ -66,10 +95,7 @@ export default function Home() {
     } catch (e) { alert('Could not add: ' + e.message); }
   };
 
-  const removeExpense = async (id) => {
-    await supabase.from('expenses').delete().eq('id', id);
-    setExpenses((list) => list.filter((e) => e.id !== id));
-  };
+  const removeExpense = async (id) => { await supabase.from('expenses').delete().eq('id', id); setExpenses((list) => list.filter((e) => e.id !== id)); };
 
   if (checking) return <main style={styles.page}><div style={styles.card}>Loading…</div></main>;
 
@@ -78,7 +104,7 @@ export default function Home() {
       <main style={styles.page}>
         <div style={styles.card}>
           <div style={styles.header}><div style={styles.brand}><div style={styles.logo}>S</div><div style={styles.title}>SplitSmart</div></div></div>
-          <p style={{ color: '#6b7280', fontSize: 14, marginBottom: 16 }}>Sign in to see your expenses on any device.</p>
+          <p style={{ color: '#6b7280', fontSize: 14, marginBottom: 16 }}>Sign in to see your groups on any device.</p>
           <input style={styles.input2} type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email" />
           <input style={styles.input2} type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password (6+ characters)" />
           <div style={{ display: 'flex', gap: 10, marginTop: 6 }}>
@@ -98,26 +124,42 @@ export default function Home() {
           <div style={styles.brand}><div style={styles.logo}>S</div><div style={styles.title}>SplitSmart</div></div>
           <button style={styles.signout} onClick={signOut}>Sign out</button>
         </div>
-        <div style={styles.addRow}>
-          <input style={styles.input} value={text} onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && addExpense()} placeholder="Add an expense…" />
-          <button style={styles.addBtn} onClick={addExpense}>+</button>
+
+        <div style={styles.groupBar}>
+          <select style={styles.select} value={groupId} onChange={(e) => setGroupId(e.target.value)}>
+            {groups.length === 0 && <option value="">No groups yet</option>}
+            {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+          </select>
+          <button style={styles.gbtn} onClick={createGroup}>+ New</button>
+          <button style={styles.gbtn} onClick={joinGroup}>Join</button>
         </div>
-        <div style={styles.list}>
-          {expenses.length === 0 && <div style={styles.empty}>No expenses yet — add your first one above.</div>}
-          {expenses.map((e) => (
-            <div key={e.id} style={styles.item}>
-              <div style={styles.itemEmoji}>{e.emoji || '🧾'}</div>
-              <div style={styles.itemMain}>
-                <div style={styles.itemName}>{e.name}</div>
-                <div style={styles.itemPaid}>paid by {e.paid_by}</div>
-              </div>
-              <div style={styles.itemAmount}>{inr(e.amount)}</div>
-              <button style={styles.remove} onClick={() => removeExpense(e.id)}>×</button>
+        {currentGroup && <div style={styles.codeLine}>Invite code: <b>{currentGroup.join_code}</b></div>}
+
+        {groupId ? (
+          <>
+            <div style={styles.addRow}>
+              <input style={styles.input} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addExpense()} placeholder="Add an expense…" />
+              <button style={styles.addBtn} onClick={addExpense}>+</button>
             </div>
-          ))}
-        </div>
-        <div style={styles.total}>Total {inr(total)}</div>
+            <div style={styles.list}>
+              {expenses.length === 0 && <div style={styles.empty}>No expenses in this group yet.</div>}
+              {expenses.map((e) => (
+                <div key={e.id} style={styles.item}>
+                  <div style={styles.itemEmoji}>{e.emoji || '🧾'}</div>
+                  <div style={styles.itemMain}>
+                    <div style={styles.itemName}>{e.name}</div>
+                    <div style={styles.itemPaid}>paid by {e.paid_by}</div>
+                  </div>
+                  <div style={styles.itemAmount}>{inr(e.amount)}</div>
+                  <button style={styles.remove} onClick={() => removeExpense(e.id)}>×</button>
+                </div>
+              ))}
+            </div>
+            <div style={styles.total}>Total {inr(total)}</div>
+          </>
+        ) : (
+          <div style={styles.empty}>Create a group or join one with a code to get started.</div>
+        )}
       </div>
     </main>
   );
@@ -126,11 +168,15 @@ export default function Home() {
 const styles = {
   page: { minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '28px 16px 48px' },
   card: { width: '100%', maxWidth: 420, background: 'var(--card)', borderRadius: 24, boxShadow: '0 24px 60px -24px rgba(13,27,62,.28)', border: '1px solid var(--line)', padding: 20, marginTop: 12 },
-  header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18 },
+  header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
   brand: { display: 'flex', alignItems: 'center', gap: 10 },
   logo: { width: 36, height: 36, borderRadius: 11, display: 'grid', placeItems: 'center', color: '#fff', fontWeight: 800, fontSize: 18, background: 'linear-gradient(135deg, var(--blue), var(--cyan))' },
   title: { fontSize: 20, fontWeight: 800 },
   signout: { border: '1px solid var(--line)', background: '#fff', borderRadius: 10, padding: '7px 13px', fontSize: 13, fontWeight: 700, color: 'var(--muted)', cursor: 'pointer' },
+  groupBar: { display: 'flex', gap: 8, marginBottom: 8 },
+  select: { flex: 1, border: '1px solid var(--line)', borderRadius: 12, padding: '10px 12px', fontSize: 14, fontWeight: 700, background: '#f7f9fc', color: 'var(--ink)' },
+  gbtn: { flex: 'none', border: '1px solid var(--line)', background: '#fff', borderRadius: 12, padding: '0 14px', fontSize: 13.5, fontWeight: 800, color: 'var(--blue)', cursor: 'pointer' },
+  codeLine: { fontSize: 12.5, color: 'var(--muted)', marginBottom: 14 },
   addRow: { display: 'flex', gap: 10, marginBottom: 16 },
   input: { flex: 1, border: '1px solid var(--line)', borderRadius: 14, padding: '13px 15px', fontSize: 15, outline: 'none', background: '#f7f9fc' },
   input2: { width: '100%', border: '1px solid var(--line)', borderRadius: 12, padding: '12px 14px', fontSize: 15, outline: 'none', background: '#f7f9fc', marginBottom: 10, boxSizing: 'border-box' },
