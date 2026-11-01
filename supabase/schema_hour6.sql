@@ -61,6 +61,9 @@ drop policy if exists "join groups"           on group_members;
 drop policy if exists "see group expenses"    on expenses;
 drop policy if exists "add group expenses"    on expenses;
 drop policy if exists "delete group expenses" on expenses;
+drop policy if exists "see own expenses"      on expenses;
+drop policy if exists "add own expenses"      on expenses;
+drop policy if exists "delete own expenses"   on expenses;
 
 create policy "see my groups"      on groups for select using (is_group_member(id));
 create policy "create groups"      on groups for insert with check (auth.uid() = created_by);
@@ -71,3 +74,8 @@ create policy "join groups"        on group_members for insert with check (user_
 create policy "see group expenses"    on expenses for select using (is_group_member(group_id));
 create policy "add group expenses"    on expenses for insert with check (is_group_member(group_id));
 create policy "delete group expenses" on expenses for delete using (is_group_member(group_id));
+
+-- The current app also supports personal expenses that do not belong to a group.
+create policy "see own expenses"    on expenses for select using (auth.uid() = user_id);
+create policy "add own expenses"    on expenses for insert with check (auth.uid() = user_id);
+create policy "delete own expenses" on expenses for delete using (auth.uid() = user_id);

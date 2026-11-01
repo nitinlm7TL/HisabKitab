@@ -46,16 +46,23 @@ export default function Home() {
     try {
       const res = await fetch('/api/split', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sentence: t }),
+        body: JSON.stringify({ text: t }),
       });
       const data = await res.json();
       if (data.error) { alert('AI error: ' + data.error); return; }
       const { data: rows, error } = await supabase.from('expenses')
-        .insert({ user_id: session.user.id, name: data.description || t, paid_by: 'You', amount: data.amount || 0 })
+        .insert({
+          user_id: session.user.id,
+          name: data.name,
+          emoji: data.emoji,
+          paid_by: data.paidBy,
+          amount: data.amount,
+        })
         .select();
       if (error) { alert('Save error: ' + error.message); return; }
       setExpenses((list) => [...list, rows[0]]);
       setText('');
+      if (data.warning) alert(data.warning);
     } catch (e) { alert('Could not add: ' + e.message); }
   };
 
